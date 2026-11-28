@@ -30,7 +30,7 @@ RELAY_DATA_DIR=/data
 
 Both settings are optional: with no Temporal settings, the relay uses plugin-json in `/data`.
 
-The files are not encrypted, and they hold only hashes of the secrets and the tokens. Protect the volume as you protect the relay. Run one relay process on the volume: only that process writes the files. The relay's plugin-json holds the data folder, so stop the relay before you run `relay pair-code` on the same folder.
+The files are not encrypted, and they hold only hashes of the secrets and the tokens. Protect the volume as you protect the relay. Run one relay process on the volume. `relay pair-code` can run next to the running relay on the same folder: plugin-json locks each write.
 
 ## plugin-temporal
 
@@ -47,7 +47,7 @@ The relay gives plugin-temporal these settings:
 | `DEPLOY_ID` | `deploy_id` |
 | `TASK_QUEUE` | `task_queue` |
 | `BUCKET_*` | `bucket_*` (plugin-temporal writes only under `_plugin-temporal/` in the bucket) |
-| `RELAY_DATA_DIR` (with no bucket) | `blob_dir` = `<RELAY_DATA_DIR>/blobs` |
+| `RELAY_DATA_DIR` (with no bucket) | `blob_dir`: the folder `blobs` in `RELAY_DATA_DIR` |
 
 You change no setting for this. plugin-temporal needs no search attribute, and the relay does not register a namespace or a search attribute.
 
@@ -103,9 +103,13 @@ plugin-temporal gives a store ID: `temporal:<namespace>/<namespace ID>/<deploy I
 
 To get the same store ID on the Mac, open **Spec Studio > Settings > Backend**, choose plugin-temporal, and set:
 
-- the same namespace (`TEMPORAL_NAMESPACE`) and the same `deploy_id` (`DEPLOY_ID`);
+- the same Temporal server, namespace (`TEMPORAL_NAMESPACE`) and `deploy_id` (`DEPLOY_ID`). The store ID holds the namespace ID, which comes from the server, so a namespace of the same name on another server gives another store ID;
 - the same payload keys (`PAYLOAD_KEYS`);
-- an address of the same Temporal that the Mac can reach. The address is not part of the store ID.
+- the same bucket (`BUCKET_*`), so that each side can read the blobs and the exports of the other;
+- the same plugin-temporal version as the relay image;
+- an address of that Temporal that the Mac can reach. The address is not part of the store ID.
+
+Keep the Temporal frontend private. Reach it over a VPN or a private network, or use TLS with mTLS or an API key (`TEMPORAL_AUTH`). Do not open a frontend with `TEMPORAL_AUTH=plain` to the internet: anyone who reaches it can read the workflow list and stop or delete the workflows, and these workflows are the only store of your specs.
 
 ## Another plugin
 
@@ -141,10 +145,12 @@ A move to a different plugin that is empty starts the relay empty. The Mac fills
 
 A relay older than 0.8.0 had two built-in stores: a JSON store and a Temporal store with the relay's own workflows. Relay 0.8.0 removes them. Upgrade the image and keep the same settings. The first start moves the data into the plugin one time. The Mac keeps its pairing, and Claude AI keeps its sign-in. You do not pair again, and you do not sign in again.
 
-- **From the built-in JSON store:** the relay starts plugin-json on the same `RELAY_DATA_DIR`. plugin-json imports the old files and keeps a copy in the folder `backup-relay-json-<time>/`. Then the relay adds its attributes to the imported documents (log event `imported_documents_repaired`). When an old file is bad, the start stops with a message that names the file, and nothing changes.
-- **From the built-in Temporal store:** the relay starts plugin-temporal on the same namespace, `DEPLOY_ID`, `TASK_QUEUE` and `PAYLOAD_KEYS`. Before the plugin starts, the relay runs its old worker one time. The relay sends a `handoff` update to each open workflow of this deploy. Each workflow continues as new as a plugin-temporal workflow with the same workflow ID. Then the relay stops the old worker and starts the plugin. Last, the relay writes a closed-spec record for each spec that closed in the retention of the namespace.
+- **From the built-in JSON store:** the relay starts plugin-json on the same `RELAY_DATA_DIR`, with the same `DEPLOY_ID` (plugin-json imports only the files of that deploy ID). plugin-json imports the old files, keeps a copy in the folder `backup-relay-json-<time>/`, and removes the old files. Then the relay adds its attributes to the imported documents (log event `imported_documents_repaired`). When an old file is bad, the start stops with a message that names the file, and nothing changes.
+- **From the built-in Temporal store:** the relay starts plugin-temporal on the same namespace, `DEPLOY_ID`, `TASK_QUEUE` and `PAYLOAD_KEYS`. Before the plugin starts, the relay runs its old worker one time. The relay sends a `handoff` update to each open workflow of this deploy. Each workflow continues as new as a plugin-temporal workflow with the same workflow ID. Then the relay stops the old worker and starts the plugin. Last, the relay writes a closed-spec record for each spec that closed in the retention of the namespace. The old worker can log a warning that it cannot run the type `SpecStudioEntity`: that is the first task of a moved workflow, and plugin-temporal takes it after a short delay. For some seconds after the start, a moved spec can be missing from a list.
 
 The log has the counts (`handoff_moved_all`, `handoff_closed_specs`) and each workflow that failed (`handoff_failed`). A failure stops the start. The next start moves the workflows that are still open. The relay opens its port only after the move, and a start with nothing to move skips the move.
+
+With Helm, upgrade the chart together with the image: the 0.8.0 chart has a startup probe of up to 5 minutes for the first start. A relay 0.3 Compose `dev` profile needs `TEMPORAL_ADDRESS=temporal:7233` in `.env`, else the relay starts on an empty plugin-json.
 
 To go back to an older relay after the move from plugin-json: stop the relay, copy the files from the backup folder to the data folder, and remove `layout.json` and `state/`. After the move from the built-in Temporal store, an older relay cannot run the moved workflows. Stay on relay 0.8.0.
 
@@ -313,7 +319,7 @@ A setting that is missing or not valid stops the start. The message names the se
 
 ### PAYLOAD_KEYS
 
-plugin-temporal only. A comma-separated list of `<scope>:<key id>:<base64 key>`. The scope is `data` (the spec workflows) or `config` (the relay-config workflow). Each key is 32 random bytes; `relay keys` makes a new value. The first key of each scope encrypts. All keys of a scope decrypt, so you can change a key: put the new key first and keep the old key after it.
+plugin-temporal only. A comma-separated list of `<scope>:<key id>:<base64 key>`. The scope is `data` (the spec and desk workflows) or `config` (the relay-config workflow). Each key is 32 random bytes; `relay keys` makes a new value. The first key of each scope encrypts. All keys of a scope decrypt, so you can change a key: put the new key first and keep the old key after it.
 
 ```sh
 PAYLOAD_KEYS=data:data-2:<new>,data:data-1:<old>,config:config-1:<key>
