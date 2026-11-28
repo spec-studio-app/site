@@ -90,7 +90,7 @@ Or run the command from the log in a terminal:
 studio agent pair wss://relay.example.com/agent K7QM-2XRD-9VHP
 ```
 
-The code works once. For a new code, run `relay pair-code` where the relay runs. With plugin-json, run it on the same data folder as the relay, with the relay stopped:
+The code works once. For a new code, run `relay pair-code` where the relay runs, with the same settings. With plugin-json, use the same data folder. The relay can keep running:
 
 ```sh
 docker compose exec relay relay pair-code
