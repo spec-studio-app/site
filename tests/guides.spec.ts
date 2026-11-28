@@ -133,12 +133,12 @@ test('the tools table gives each tool online and offline', async ({ page }) => {
 // R5.S1, R5.S2 and R5.S3
 test('the backends guide covers each store, bucket and run choice', async ({ page }) => {
 	await page.goto('./guides/backends/');
-	expect(await headings(page)).toEqual(['The JSON store', 'The Temporal store', 'Store plugins', 'Switch between stores', 'The attachment bucket', 'Ways to run the relay', 'Every setting']);
+	expect(await headings(page)).toEqual(['plugin-json', 'plugin-temporal', 'Another plugin', 'Upgrade from a relay with a built-in store', 'The attachment bucket', 'Ways to run the relay', 'Every setting']);
 	expect(await headings(page, 'h3')).toEqual([
 		'Temporal Cloud with an API key',
 		'Temporal Cloud with mTLS',
-		'The search attributes',
 		'Self-hosted Temporal',
+		'Share the store with the Mac',
 		'Cloudflare R2',
 		'AWS S3',
 		'MinIO',
@@ -150,10 +150,8 @@ test('the backends guide covers each store, bucket and run choice', async ({ pag
 	]);
 	const guide = page.getByTestId('guide');
 	for (const auth of ['plain', 'tls', 'mtls']) await expect(guide.locator('code', { hasText: new RegExp(`^${auth}$`) }).first()).toBeVisible();
-	const attributes = guide.locator('h3#the-search-attributes ~ .table').first().locator('tbody td:first-child');
-	await expect(attributes).toHaveText([
-		'RepoKey', 'SpecSlug', 'SpecTitle', 'Stage', 'Status', 'Mode', 'NeedsYou', 'PendingForMac', 'PendingForCoordinator', 'RelayDeployId'
-	]);
+	await expect(guide.getByText('plugin-temporal needs no search attribute')).toHaveCount(1);
+	await expect(guide.getByText('Use Temporal Server 1.27 or later.')).toHaveCount(1);
 	await expect(guide.locator('pre code', { hasText: 'docker compose --profile dev up' })).toHaveCount(1);
 });
 
