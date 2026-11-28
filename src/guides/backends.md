@@ -105,6 +105,7 @@ To get the same store ID on the Mac, open **Spec Studio > Settings > Backend**, 
 
 - the same Temporal server, namespace (`TEMPORAL_NAMESPACE`) and `deploy_id` (`DEPLOY_ID`). The store ID holds the namespace ID, which comes from the server, so a namespace of the same name on another server gives another store ID;
 - the same payload keys (`PAYLOAD_KEYS`);
+- the same task queue (`TASK_QUEUE`, `task_queue`), when you set one: each side starts and runs the workflows on its own task queue;
 - the same bucket (`BUCKET_*`), so that each side can read the blobs and the exports of the other;
 - the same plugin-temporal version as the relay image;
 - an address of that Temporal that the Mac can reach. The address is not part of the store ID.
@@ -150,7 +151,7 @@ A relay older than 0.8.0 had two built-in stores: a JSON store and a Temporal st
 
 The log has the counts (`handoff_moved_all`, `handoff_closed_specs`) and each workflow that failed (`handoff_failed`). A failure stops the start. The next start moves the workflows that are still open. The relay opens its port only after the move, and a start with nothing to move skips the move.
 
-With Helm, upgrade the chart together with the image: the 0.8.0 chart has a startup probe of up to 5 minutes for the first start. A relay 0.3 Compose `dev` profile needs `TEMPORAL_ADDRESS=temporal:7233` in `.env`, else the relay starts on an empty plugin-json.
+With Helm, upgrade the chart together with the image: the 0.8.0 chart has a startup probe of up to 5 minutes for the first start. A relay 0.3 Compose `dev` profile is a test setup. Since 0.4, its dev Temporal keeps its data in another volume, so the upgrade starts with no data: set `TEMPORAL_ADDRESS=temporal:7233` in `.env`, then pair the Mac again and sign in to the connector again.
 
 To go back to an older relay after the move from plugin-json: stop the relay, copy the files from the backup folder to the data folder, and remove `layout.json` and `state/`. After the move from the built-in Temporal store, an older relay cannot run the moved workflows. Stay on relay 0.8.0.
 
