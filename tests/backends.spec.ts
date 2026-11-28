@@ -39,17 +39,18 @@ test('the backends guide has every relay setting with the same default, and no o
 	for (const [name, setting] of relay) expect(guide.get(name), name).toEqual(setting);
 });
 
-// relay-plugin-host R6.S1: the store can be a plugin; JSON stays the default.
-test('the backends guide explains store plugins and keeps JSON the default', () => {
+// relay-plugins-only R7: the relay keeps its state only in a plugin; plugin-json is the default.
+test('the backends guide explains the plugins of the relay and keeps plugin-json the default', () => {
 	const guide = readFileSync(new URL('../src/guides/backends.md', import.meta.url), 'utf8');
-	const start = guide.indexOf('\n## Store plugins\n');
-	expect(start, 'a "## Store plugins" section').toBeGreaterThan(0);
+	const start = guide.indexOf('\n## Another plugin\n');
+	expect(start, 'a "## Another plugin" section').toBeGreaterThan(0);
 	const section = guide.slice(start, guide.indexOf('\n## ', start + 1));
-	expect(section).toContain('**The JSON store stays the default**');
-	expect(section).toContain('[plugin-json](https://github.com/spec-studio-app/plugin-json)');
-	expect(section).toContain('[plugin-temporal](https://github.com/spec-studio-app/plugin-temporal)');
+	expect(section).toContain('plugin-json is the default');
 	expect(section).toContain('RELAY_PLUGIN=');
 	expect(section).toContain('RELAY_PLUGIN_URL=');
 	const relay = readFileSync(new URL('../src/guides/relay.md', import.meta.url), 'utf8');
-	expect(relay).toContain('(/guides/backends/#store-plugins)');
+	expect(relay).toContain('(/guides/backends/#another-plugin)');
+	expect(guide).toContain('[plugin-json](https://github.com/spec-studio-app/plugin-json)');
+	expect(guide).toContain('[plugin-temporal](https://github.com/spec-studio-app/plugin-temporal)');
+	expect(guide).toContain('The relay has no store of its own. A **backend plugin** keeps its state.');
 });

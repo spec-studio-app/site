@@ -4,30 +4,54 @@ summary: The store, bucket and hosting choices of the relay, and every setting.
 order: 4
 ---
 
-The relay plugs into two backends that you choose: a **store** that holds the copy of each spec, the messages and the sign-ins, and an optional **bucket** that holds the attachments. The store is **JSON files** on a volume (the default) or your own **Temporal** namespace. The store can also be a **backend plugin** (see [Store plugins](#store-plugins)). You also choose **how to run** the relay. This guide gives the settings for each choice. The relay reads every setting from the environment.
+The relay plugs into two backends that you choose: a **store** that holds the copy of each spec, the messages and the sign-ins, and an optional **bucket** that holds the attachments. The relay has no store of its own. A **backend plugin** keeps its state. The image includes two plugins: **plugin-json** (JSON files on a volume, the default) and **plugin-temporal** (your own Temporal namespace). You can also give the relay another plugin. You also choose **how to run** the relay. This guide gives the settings for each choice. The relay reads every setting from the environment.
 
-`RELAY_STORE` selects the store: `json` or `temporal`. When `RELAY_STORE` is not set, the relay uses the Temporal store if `TEMPORAL_ADDRESS` is set, else the JSON store. When `RELAY_PLUGIN` or `RELAY_PLUGIN_URL` is set, the store is that plugin, and `RELAY_STORE` must be empty (see [Store plugins](#store-plugins)). At start, the relay logs the store and the reason (`store_selected`).
+`RELAY_STORE` selects the plugin of the image: `json` or `temporal`. When `RELAY_STORE` is not set, the relay uses plugin-temporal if `TEMPORAL_ADDRESS` is set, else plugin-json. When `RELAY_PLUGIN` or `RELAY_PLUGIN_URL` is set, the store is that plugin, and `RELAY_STORE` must be empty (see [Another plugin](#another-plugin)). At start, the relay logs the store and the reason (`store_selected`), and the name and version of the plugin (`plugin_started`).
 
-## The JSON store
+The relay starts the plugin as its child process. The image includes these versions:
 
-The JSON store is the default. The relay is one container and a volume, with no other service. There is no Temporal, there are no payload keys and there are no codec endpoints.
+| Plugin | Version |
+|---|---|
+| [plugin-json](https://github.com/spec-studio-app/plugin-json) | 0.2.0 |
+| [plugin-temporal](https://github.com/spec-studio-app/plugin-temporal) | 0.1.0 |
 
-The relay keeps its state in `RELAY_DATA_DIR` (default `/data`). Mount a persistent volume there: without a volume, the state is lost with the container. The image runs as uid 1000, and that user must be able to write to the folder. When it cannot, the relay stops at start with a message that names `RELAY_DATA_DIR`.
+You keep the settings that you used before relay 0.8.0. The relay gives each plugin its settings from the same names. To upgrade a relay that had a built-in store, see [Upgrade from a relay with a built-in store](#upgrade-from-a-relay-with-a-built-in-store).
+
+## plugin-json
+
+plugin-json is the default. The relay is one container and a volume, with no other service. There is no Temporal, there are no payload keys and there are no codec endpoints.
+
+plugin-json keeps the relay's state in `RELAY_DATA_DIR` (default `/data`). Mount a persistent volume there: without a volume, the state is lost with the container. The image runs as uid 1000, and that user must be able to write to the folder. When it cannot, the relay stops at start with a message that names `RELAY_DATA_DIR`.
 
 ```sh
 RELAY_STORE=json
 RELAY_DATA_DIR=/data
 ```
 
-Both settings are optional: with no Temporal settings, the relay uses the JSON store in `/data`.
+Both settings are optional: with no Temporal settings, the relay uses plugin-json in `/data`.
 
-The files are not encrypted, and they hold only hashes of the secrets and the tokens. Protect the volume as you protect the relay. Run one relay process on the volume: only that process writes the files. Run `relay pair-code` where the relay runs, on the same data folder.
+The files are not encrypted, and they hold only hashes of the secrets and the tokens. Protect the volume as you protect the relay. Run one relay process on the volume. `relay pair-code` can run next to the running relay on the same folder: plugin-json locks each write.
 
-## The Temporal store
+## plugin-temporal
 
-Use the Temporal store when you already run Temporal. Set `TEMPORAL_ADDRESS` (or `RELAY_STORE=temporal` with `TEMPORAL_ADDRESS`), `PAYLOAD_KEYS` and the other Temporal settings below. The relay needs one Temporal namespace. Two relays can share a namespace when each has its own `DEPLOY_ID`.
+Use plugin-temporal when you already run Temporal. Set `TEMPORAL_ADDRESS` (or `RELAY_STORE=temporal` with `TEMPORAL_ADDRESS`), `PAYLOAD_KEYS` and the other Temporal settings below. The relay needs one Temporal namespace. Two relays can share a namespace when each has its own `DEPLOY_ID`.
 
-Make the payload keys. The relay encrypts every Temporal payload with them. Keep a copy in a safe place: without the same keys, the relay cannot read its data. See [PAYLOAD_KEYS](#payload-keys).
+The relay gives plugin-temporal these settings:
+
+| Relay setting | plugin-temporal setting |
+|---|---|
+| `TEMPORAL_ADDRESS` | `address` |
+| `TEMPORAL_NAMESPACE` | `namespace` |
+| `TEMPORAL_AUTH`, `TEMPORAL_API_KEY`, `TEMPORAL_TLS_CERT`, `TEMPORAL_TLS_KEY` | `auth`, `api_key`, `tls_cert`, `tls_key` |
+| `PAYLOAD_KEYS` | `payload_keys` |
+| `DEPLOY_ID` | `deploy_id` |
+| `TASK_QUEUE` | `task_queue` |
+| `BUCKET_*` | `bucket_*` (plugin-temporal writes only under `_plugin-temporal/` in the bucket) |
+| `RELAY_DATA_DIR` (with no bucket) | `blob_dir`: the folder `blobs` in `RELAY_DATA_DIR` |
+
+You change no setting for this. plugin-temporal needs no search attribute, and the relay does not register a namespace or a search attribute.
+
+Make the payload keys. plugin-temporal encrypts every Temporal payload with them. Keep a copy in a safe place: without the same keys, nobody can read the data. See [PAYLOAD_KEYS](#payload-keys).
 
 ```sh
 docker run --rm ghcr.io/spec-studio-app/relay keys
@@ -36,8 +60,7 @@ docker run --rm ghcr.io/spec-studio-app/relay keys
 ### Temporal Cloud with an API key
 
 1. Make a namespace, and an API key for it.
-2. Add the relay's search attributes to the namespace (see below). The relay cannot add them on Temporal Cloud: at start it prints the attributes that are missing and stops.
-3. Set the settings:
+2. Set the settings:
 
 ```sh
 TEMPORAL_ADDRESS=<namespace>.<account>.tmprl.cloud:7233
@@ -45,11 +68,11 @@ TEMPORAL_NAMESPACE=<namespace>.<account>
 TEMPORAL_API_KEY=<the API key>
 ```
 
-You can also use the regional API key endpoint for `TEMPORAL_ADDRESS`. The relay knows Temporal Cloud from the API key or from a `*.tmprl.cloud` address, and then never registers a namespace or search attributes.
+You can also use the regional API key endpoint for `TEMPORAL_ADDRESS`.
 
 ### Temporal Cloud with mTLS
 
-Do steps 1 and 2 as above, with a client certificate for the namespace in place of the API key. Then set `TEMPORAL_TLS_CERT` and `TEMPORAL_TLS_KEY`, as PEM text or as the path of a PEM file:
+Make a namespace and a client certificate for it, in place of the API key. Then set `TEMPORAL_TLS_CERT` and `TEMPORAL_TLS_KEY`, as PEM text or as the path of a PEM file:
 
 ```sh
 TEMPORAL_ADDRESS=<namespace>.<account>.tmprl.cloud:7233
@@ -58,31 +81,9 @@ TEMPORAL_TLS_CERT=/secrets/client.pem
 TEMPORAL_TLS_KEY=/secrets/client.key
 ```
 
-### The search attributes
-
-Add each of these to a Temporal Cloud namespace:
-
-| Name | Type |
-|---|---|
-| RepoKey | Keyword |
-| SpecSlug | Keyword |
-| SpecTitle | Text |
-| Stage | Keyword |
-| Status | Keyword |
-| Mode | Keyword |
-| NeedsYou | Bool |
-| PendingForMac | Bool |
-| PendingForCoordinator | Bool |
-| RelayDeployId | Keyword |
-
-```sh
-tcld namespace search-attributes add -n <namespace>.<account> --sa "RepoKey=Keyword"
-# ... one line for each attribute
-```
-
 ### Self-hosted Temporal
 
-Set `TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE`. At start, the relay registers the namespace (30 days of retention) when it does not exist, and it registers the search attributes. Choose the auth with `TEMPORAL_AUTH`:
+Use Temporal Server 1.27 or later. Make the namespace first: the relay does not make it. Set `TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE`. Choose the auth with `TEMPORAL_AUTH`:
 
 - `plain` (the default): a frontend with no TLS, for example on a private network.
 - `tls`: a frontend with server TLS.
@@ -94,20 +95,28 @@ TEMPORAL_NAMESPACE=studio-relay
 TEMPORAL_AUTH=plain
 ```
 
-To try the Temporal store on one machine, Docker Compose can run a local Temporal dev server for you (see [Docker Compose](#docker-compose)).
+To try plugin-temporal on one machine, Docker Compose can run a local Temporal dev server for you (see [Docker Compose](#docker-compose)).
 
-## Store plugins
+### Share the store with the Mac
 
-The relay can keep its state in a backend plugin: a separate program that stores the relay's data. The relay keeps all the rules; the plugin only stores. The plugin protocol (`PROTOCOL.md` in [plugin-sdk](https://github.com/spec-studio-app/plugin-sdk)) defines the calls, so you can write a plugin for your own storage.
+plugin-temporal gives a store ID: `temporal:<namespace>/<namespace ID>/<deploy ID>`. The relay sends it to the Mac in its welcome. When the Mac's plugin-temporal gives the same store ID, the Mac and the relay use one store.
 
-You do not need a plugin. **The JSON store stays the default**, and with no plugin setting, nothing changes.
+To get the same store ID on the Mac, open **Spec Studio > Settings > Backend**, choose plugin-temporal, and set:
 
-The official plugins:
+- the same Temporal server, namespace (`TEMPORAL_NAMESPACE`) and `deploy_id` (`DEPLOY_ID`). The store ID holds the namespace ID, which comes from the server, so a namespace of the same name on another server gives another store ID;
+- the same payload keys (`PAYLOAD_KEYS`);
+- the same task queue (`TASK_QUEUE`, `task_queue`), when you set one: each side starts and runs the workflows on its own task queue;
+- the same bucket (`BUCKET_*`), so that each side can read the blobs and the exports of the other;
+- the same plugin-temporal version as the relay image;
+- an address of that Temporal that the Mac can reach. The address is not part of the store ID.
 
-- [plugin-json](https://github.com/spec-studio-app/plugin-json): JSON files, as the JSON store.
-- [plugin-temporal](https://github.com/spec-studio-app/plugin-temporal): Temporal, with the full history of each spec.
+Keep the Temporal frontend private. Reach it over a VPN or a private network, or use TLS with mTLS or an API key (`TEMPORAL_AUTH`). Do not open a frontend with `TEMPORAL_AUTH=plain` to the internet: anyone who reaches it can read the workflow list and stop or delete the workflows, and these workflows are the only store of your specs.
 
-A later relay version uses them for `RELAY_STORE=json` and `RELAY_STORE=temporal`, with the same data and no step for you. Until then, those settings use the relay's built-in stores.
+## Another plugin
+
+A backend plugin is a separate program that stores the relay's data. The relay keeps all the rules; the plugin only stores. The plugin protocol (`PROTOCOL.md` in [plugin-sdk](https://github.com/spec-studio-app/plugin-sdk)) defines the calls, so you can write a plugin for your own storage.
+
+You do not need another plugin. plugin-json is the default, and with no plugin setting, the relay uses the plugin of the image.
 
 To use another plugin, set one of these, and leave `RELAY_STORE` empty:
 
@@ -131,15 +140,20 @@ At start, the relay logs the plugin's name, version, repo and capabilities. When
 
 With a plugin from `RELAY_PLUGIN`, the plugin can lock its storage while the relay runs. Then `relay pair-code` cannot open the storage: stop the relay, run `relay pair-code` with the same settings, and start the relay again. A sidecar plugin does not need this.
 
-## Switch between stores
+A move to a different plugin that is empty starts the relay empty. The Mac fills the new store with a short first sync of each spec when it has no sync cursors. So on the Mac, run `studio agent unpair --force` (it removes the pairing and the cursors on this Mac only), then pair again (see [Pair the Mac](/guides/relay/#step-5-pair-the-mac)). The messages that wait in the old store are lost, and you sign in to the connector in Claude AI again.
 
-The relay does not move data from one store to the other. A relay on a new store starts empty:
+## Upgrade from a relay with a built-in store
 
-- The Mac fills the new store with a short first sync of each spec (the state of the spec, its last 20 activity lines and its messages for Claude AI) when it has no sync cursors. So on the Mac, run `studio agent unpair --force` (it removes the pairing and the cursors on this Mac only), then pair again (see [Pair the Mac](/guides/relay/#step-5-pair-the-mac)).
-- The messages that wait for the Mac in the old store are lost. The messages for Claude AI that Claude AI did not read are lost too. So switch when no message waits: the Mac is online and has each message, and Claude AI read its messages.
-- The pairing and the sign-ins are in the store too. After the switch, sign in to the connector in Claude AI again.
+A relay older than 0.8.0 had two built-in stores: a JSON store and a Temporal store with the relay's own workflows. Relay 0.8.0 removes them. Upgrade the image and keep the same settings. The first start moves the data into the plugin one time. The Mac keeps its pairing, and Claude AI keeps its sign-in. You do not pair again, and you do not sign in again.
 
-An upgrade from relay 0.3 keeps Temporal: the old settings set `TEMPORAL_ADDRESS`, so the relay uses the Temporal store. With the Compose `dev` profile of 0.3, add `TEMPORAL_ADDRESS=temporal:7233` to `.env`, because the 0.4 `compose.yaml` does not set it.
+- **From the built-in JSON store:** the relay starts plugin-json on the same `RELAY_DATA_DIR`, with the same `DEPLOY_ID` (plugin-json imports only the files of that deploy ID). plugin-json imports the old files, keeps a copy in the folder `backup-relay-json-<time>/`, and removes the old files. Then the relay adds its attributes to the imported documents (log event `imported_documents_repaired`). When an old file is bad, the start stops with a message that names the file, and nothing changes.
+- **From the built-in Temporal store:** the relay starts plugin-temporal on the same namespace, `DEPLOY_ID`, `TASK_QUEUE` and `PAYLOAD_KEYS`. Before the plugin starts, the relay runs its old worker one time. The relay sends a `handoff` update to each open workflow of this deploy. Each workflow continues as new as a plugin-temporal workflow with the same workflow ID. Then the relay stops the old worker and starts the plugin. Last, the relay writes a closed-spec record for each spec that closed in the retention of the namespace. The old worker can log a warning that it cannot run the type `SpecStudioEntity`: that is the first task of a moved workflow, and plugin-temporal takes it after a short delay. For some seconds after the start, a moved spec can be missing from a list.
+
+The log has the counts (`handoff_moved_all`, `handoff_closed_specs`) and each workflow that failed (`handoff_failed`). A failure stops the start. The next start moves the workflows that are still open. The relay opens its port only after the move, and a start with nothing to move skips the move.
+
+With Helm, upgrade the chart together with the image: the 0.8.0 chart has a startup probe of up to 5 minutes for the first start. A relay 0.3 Compose `dev` profile is a test setup. Since 0.4, its dev Temporal keeps its data in another volume, so the upgrade starts with no data: set `TEMPORAL_ADDRESS=temporal:7233` in `.env`, then pair the Mac again and sign in to the connector again.
+
+To go back to an older relay after the move from plugin-json: stop the relay, copy the files from the backup folder to the data folder, and remove `layout.json` and `state/`. After the move from the built-in Temporal store, an older relay cannot run the moved workflows. Stay on relay 0.8.0.
 
 ## The attachment bucket
 
@@ -205,11 +219,11 @@ Then run:
 docker compose up
 ```
 
-The relay uses the JSON store, with its data in the Docker volume `relay-data`.
+The relay uses plugin-json, with its data in the Docker volume `relay-data`.
 
-With your own Temporal, also set `TEMPORAL_ADDRESS`, `PAYLOAD_KEYS` and the other Temporal settings in `.env`, then run `docker compose up`.
+With your own Temporal, use plugin-temporal: also set `TEMPORAL_ADDRESS`, `PAYLOAD_KEYS` and the other Temporal settings in `.env`, then run `docker compose up`.
 
-To try the Temporal store with a local Temporal dev server (data in a Docker volume, the Temporal Web UI on port 8233 of this machine only, because it has no sign-in), add these settings to `.env`:
+To try plugin-temporal with a local Temporal dev server (data in a Docker volume, the Temporal Web UI on port 8233 of this machine only, because it has no sign-in), add these settings to `.env`:
 
 ```sh
 TEMPORAL_ADDRESS=temporal:7233
@@ -224,7 +238,7 @@ docker compose --profile dev up
 
 ### Helm
 
-With the JSON store (the default), the chart makes a PersistentVolumeClaim and keeps it when you remove the release:
+With plugin-json (the default), the chart makes a PersistentVolumeClaim and keeps it when you remove the release:
 
 ```sh
 helm install relay oci://ghcr.io/spec-studio-app/charts/relay --version <version> \
@@ -242,7 +256,7 @@ These values set the volume:
 
 The chart runs one replica with the `Recreate` strategy, so an old pod and a new pod never write the files at the same time.
 
-With the Temporal store, set `store=temporal` and the Temporal values:
+With plugin-temporal, set `store=temporal` and the Temporal values:
 
 ```sh
 helm install relay oci://ghcr.io/spec-studio-app/charts/relay --version <version> \
@@ -255,7 +269,7 @@ helm install relay oci://ghcr.io/spec-studio-app/charts/relay --version <version
 
 When `store` is empty, the chart uses the rule of the relay: `temporal` when `temporal.address` is set, else `json`.
 
-For a [store plugin](#store-plugins), leave `store` empty and set one of these values:
+For [another plugin](#another-plugin), leave `store` empty and set one of these values:
 
 - `plugin.command`: a plugin command in the image (`RELAY_PLUGIN`). The pod gets the volume at `/data` for its files.
 - `plugin.url`: the URL of a plugin that runs as its own service (`RELAY_PLUGIN_URL`), with the token in `secrets.pluginToken` when the plugin has one.
@@ -263,7 +277,7 @@ For a [store plugin](#store-plugins), leave `store` empty and set one of these v
 
 `plugin.settings` holds the plugin's settings: each name becomes `RELAY_PLUGIN_<NAME>`. Put no secret there.
 
-The Secret `existingSecret` has the key `OWNER_PASSWORD_HASH`, and as needed `PAYLOAD_KEYS` (Temporal store), `TEMPORAL_API_KEY`, `TEMPORAL_TLS_CERT`, `TEMPORAL_TLS_KEY`, `BUCKET_ACCESS_KEY`, `BUCKET_SECRET_KEY` and `PLUGIN_TOKEN` (a plugin sidecar, or a plugin service with a token). Or leave `existingSecret` empty and set `secrets.*` in your values: the chart then makes the Secret. Set `ingress.enabled=true` and `ingress.host` for an Ingress. The chart's `values.yaml` lists every value.
+The Secret `existingSecret` has the key `OWNER_PASSWORD_HASH`, and as needed `PAYLOAD_KEYS` (plugin-temporal), `TEMPORAL_API_KEY`, `TEMPORAL_TLS_CERT`, `TEMPORAL_TLS_KEY`, `BUCKET_ACCESS_KEY`, `BUCKET_SECRET_KEY` and `PLUGIN_TOKEN` (a plugin sidecar, or a plugin service with a token). Or leave `existingSecret` empty and set `secrets.*` in your values: the chart then makes the Secret. Set `ingress.enabled=true` and `ingress.host` for an Ingress. The chart's `values.yaml` lists every value.
 
 ### Docker
 
@@ -271,41 +285,42 @@ The Secret `existingSecret` has the key `OWNER_PASSWORD_HASH`, and as needed `PA
 docker run -d --name relay -p 8760:8760 -v relay-data:/data --env-file relay.env ghcr.io/spec-studio-app/relay:<version>
 ```
 
-The volume `relay-data` holds the files of the JSON store. With the Temporal store, the relay does not use it.
+The volume `relay-data` holds the files of plugin-json. With plugin-temporal, the relay uses it only for the blobs, when no bucket is set.
 
 ## Every setting
 
-A setting that is missing or not valid stops the start. The message names the setting and never shows its value. The settings marked "Temporal" are required only with the Temporal store. The JSON store ignores the Temporal settings.
+A setting that is missing or not valid stops the start. The message names the setting and never shows its value. The settings marked "Temporal" are required only with plugin-temporal. plugin-json ignores the Temporal settings.
 
 | Setting | Required | Description |
 |---|---|---|
 | `PUBLIC_URL` | yes | The public origin of the relay. It is the OAuth issuer. |
 | `OWNER_PASSWORD_HASH` | yes | The bcrypt hash of the owner password. |
 | `RELAY_STORE` | no | `json` or `temporal`. Default: `temporal` when `TEMPORAL_ADDRESS` is set, else `json`. |
-| `RELAY_DATA_DIR` | no | The folder of the JSON store. Default `/data`. |
-| `RELAY_PLUGIN` | no | A backend plugin command, with its arguments. See [Store plugins](#store-plugins). Not with `RELAY_STORE` or `RELAY_PLUGIN_URL`. |
+| `RELAY_DATA_DIR` | no | The data folder of plugin-json, and of plugin-temporal's blobs when no bucket is set. Default `/data`. |
+| `RELAY_PLUGIN_DIR` | no | The folder of the bundled plugins. Default `/usr/local/lib/relay/plugins`. |
+| `RELAY_PLUGIN` | no | A backend plugin command, with its arguments. See [Another plugin](#another-plugin). Not with `RELAY_STORE` or `RELAY_PLUGIN_URL`. |
 | `RELAY_PLUGIN_URL` | no | The URL of a backend plugin sidecar, for example `http://plugin:7070/rpc`. Not with `RELAY_STORE` or `RELAY_PLUGIN`. |
 | `RELAY_PLUGIN_TOKEN` | no | The token of the plugin sidecar. |
 | `RELAY_PLUGIN_<NAME>` | no | The plugin setting `<name>` (in lowercase). |
-| `PAYLOAD_KEYS` | Temporal | The codec keys, from `relay keys`. See below. |
+| `PAYLOAD_KEYS` | Temporal | The payload keys of plugin-temporal and the codec, from `relay keys`. See below. |
 | `TEMPORAL_ADDRESS` | Temporal | `host:port` of Temporal. |
 | `TEMPORAL_NAMESPACE` | no | The namespace. Default `default`. |
 | `TEMPORAL_AUTH` | no | `plain`, `tls`, `mtls` or `api-key`. Default: from the other Temporal settings, else `plain`. |
 | `TEMPORAL_API_KEY` | no | The API key (Temporal Cloud). |
 | `TEMPORAL_TLS_CERT`, `TEMPORAL_TLS_KEY` | no | The client certificate and key for mTLS: PEM text, or the path of a PEM file. |
 | `DEPLOY_ID` | no | The name of this deploy. Default `default`. Two relays on one namespace need two names. |
-| `TASK_QUEUE` | no | The task queue of the worker. Default `relay-<DEPLOY_ID>`. The relay-config workflow uses `<TASK_QUEUE>-config`. |
+| `TASK_QUEUE` | no | The task queue of the plugin-temporal workflows. Default `relay-<DEPLOY_ID>`. The relay config uses `<TASK_QUEUE>-config`. |
 | `BUCKET_ENDPOINT`, `BUCKET_NAME`, `BUCKET_ACCESS_KEY`, `BUCKET_SECRET_KEY` | no | The attachment bucket. Set all four, or none. |
 | `BUCKET_REGION` | no | The bucket region. Default `auto` (R2). |
 | `ATTACHMENT_MAX_BYTES` | no | The largest attachment. Default 10485760 (10 MB). |
-| `UI_ORIGIN` | no | The origin of the Temporal Web UI for the codec endpoints (Temporal store). |
+| `UI_ORIGIN` | no | The origin of the Temporal Web UI for the codec endpoints (plugin-temporal). |
 | `EXTRA_REDIRECT_URIS` | no | Comma-separated OAuth redirect URIs, besides the claude.ai and claude.com callbacks and loopback addresses. |
 | `PORT` | no | The HTTP port. Default 8760. |
 | `CALL_TIMEOUT_MS` | no | How long a tool call waits for the Mac. Default 90000. |
 
 ### PAYLOAD_KEYS
 
-The Temporal store only. A comma-separated list of `<scope>:<key id>:<base64 key>`. The scope is `data` (the spec workflows) or `config` (the relay-config workflow). Each key is 32 random bytes; `relay keys` makes a new value. The first key of each scope encrypts. All keys of a scope decrypt, so you can change a key: put the new key first and keep the old key after it.
+plugin-temporal only. A comma-separated list of `<scope>:<key id>:<base64 key>`. The scope is `data` (the spec and desk workflows) or `config` (the relay-config workflow). Each key is 32 random bytes; `relay keys` makes a new value. The first key of each scope encrypts. All keys of a scope decrypt, so you can change a key: put the new key first and keep the old key after it.
 
 ```sh
 PAYLOAD_KEYS=data:data-2:<new>,data:data-1:<old>,config:config-1:<key>

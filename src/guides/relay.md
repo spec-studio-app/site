@@ -10,14 +10,14 @@ order: 3
 
 The relay is a remote MCP server that you host yourself. With it, Claude AI (claude.ai, the Claude app on your phone, or Claude Code on another computer) can list, read, make and start the specs of Spec Studio on your Mac, and send messages to the Claude session of a spec.
 
-The relay keeps a copy of each spec in a store. The default store is JSON files on a volume. You can also use your own Temporal namespace. So Claude AI can read your specs and leave messages while the Mac is offline. The messages wait in the relay, and the Mac gets them when it connects again.
+The relay keeps a copy of each spec in a store. A backend plugin keeps the store. The default plugin, plugin-json, keeps JSON files on a volume. You can also use plugin-temporal, with your own Temporal namespace. So Claude AI can read your specs and leave messages while the Mac is offline. The messages wait in the relay, and the Mac gets them when it connects again.
 
 The Mac opens no port. The Spec Studio agent on the Mac connects out to the relay.
 
 ```text
 Claude AI ──HTTPS (OAuth)──▶ relay ◀──WebSocket── studio agent (Mac)
                                │
-                 JSON files on a volume, or Temporal (spec mirror, inboxes, sign-ins)
+                 backend plugin: plugin-json (files on a volume) or plugin-temporal (Temporal)
                  S3 bucket (attachments, optional)
 ```
 
@@ -27,8 +27,8 @@ The relay is for you only. It has one owner password and no sign-up. Its code is
 
 - A public HTTPS address for the relay, for example `https://relay.example.com`.
 - Docker, or a Kubernetes cluster with Helm.
-- For the JSON store (the default): a persistent volume for the data folder of the relay.
-- For the Temporal store (optional): a Temporal namespace, on Temporal Cloud or on a Temporal that you host.
+- For plugin-json (the default): a persistent volume for the data folder of the relay.
+- For plugin-temporal (optional): a Temporal namespace, on Temporal Cloud or on a Temporal that you host. A self-hosted Temporal must be version 1.27 or later.
 - Optional: a private S3-compatible bucket for attachments.
 
 [Relay backends](/guides/backends/) explains each store, bucket and hosting choice, and every setting.
@@ -43,20 +43,22 @@ read -rs RELAY_PASSWORD && printf '%s' "$RELAY_PASSWORD" | docker run --rm -i gh
 
 ## Step 2: Choose the store
 
-The relay keeps its copy of the specs, the messages and the sign-ins in one of two stores. `RELAY_STORE` selects the store: `json` or `temporal`. When `RELAY_STORE` is not set, the relay uses the Temporal store if `TEMPORAL_ADDRESS` is set, else the JSON store. When `RELAY_PLUGIN` or `RELAY_PLUGIN_URL` is set, the store is that plugin instead.
+The relay keeps its state only in a backend plugin. The image includes two plugins. `RELAY_STORE` selects one: `json` or `temporal`. When `RELAY_STORE` is not set, the relay uses plugin-temporal if `TEMPORAL_ADDRESS` is set, else plugin-json. When `RELAY_PLUGIN` or `RELAY_PLUGIN_URL` is set, the store is that plugin instead.
 
-- **The JSON store** (the default): JSON files in `RELAY_DATA_DIR` (default `/data`). Mount a persistent volume there. The relay is one container and a volume, with no other service. There are no payload keys and no codec endpoints. See [The JSON store](/guides/backends/#the-json-store).
-- **The Temporal store**: your own Temporal namespace, on Temporal Cloud or on a Temporal that you host. Use it when you already run Temporal. This store also needs the payload keys. See [The Temporal store](/guides/backends/#the-temporal-store).
+- **plugin-json** (the default): JSON files in `RELAY_DATA_DIR` (default `/data`). Mount a persistent volume there. The relay is one container and a volume, with no other service. There are no payload keys and no codec endpoints. See [plugin-json](/guides/backends/#plugin-json).
+- **plugin-temporal**: your own Temporal namespace, on Temporal Cloud or on a Temporal that you host. Use it when you already run Temporal. It needs no search attribute. It also needs the payload keys. See [plugin-temporal](/guides/backends/#plugin-temporal).
 
-The store can also be a backend plugin for your own storage, with `RELAY_PLUGIN` or `RELAY_PLUGIN_URL`. You do not need one: the JSON store is the default. The official plugins, [plugin-json](https://github.com/spec-studio-app/plugin-json) and [plugin-temporal](https://github.com/spec-studio-app/plugin-temporal), come with a later relay version, behind the same `RELAY_STORE` settings. See [Store plugins](/guides/backends/#store-plugins).
+You can also give the relay another backend plugin for your own storage, with `RELAY_PLUGIN` or `RELAY_PLUGIN_URL`. You do not need one: plugin-json is the default. See [Another plugin](/guides/backends/#another-plugin).
 
-To use the Temporal store, make the payload keys. The relay encrypts every Temporal payload with them. Keep a copy in a safe place: without the same keys, the relay cannot read its data.
+To use plugin-temporal, make the payload keys. plugin-temporal encrypts every Temporal payload with them. Keep a copy in a safe place: without the same keys, nobody can read the data.
 
 ```sh
 docker run --rm ghcr.io/spec-studio-app/relay keys
 ```
 
-The relay does not move data from one store to the other. See [Switch between stores](/guides/backends/#switch-between-stores) before you change the store.
+When the Mac uses plugin-temporal on the same Temporal server, namespace, deploy ID, payload keys and bucket, the Mac and the relay share one store. See [Share the store with the Mac](/guides/backends/#share-the-store-with-the-mac).
+
+You have a relay older than 0.8.0? Upgrade the image and keep your settings. The first start moves your data one time, and you do not pair again. See [Upgrade from a relay with a built-in store](/guides/backends/#upgrade-from-a-relay-with-a-built-in-store).
 
 ## Step 3: Choose a bucket (optional)
 
@@ -66,7 +68,7 @@ Attachments go to a private bucket, never into the store. Without a bucket the r
 
 Run it with Docker Compose, Helm or Docker, and put an HTTPS proxy (Caddy, Traefik, Cloudflare Tunnel) in front of port 8760. See [Ways to run the relay](/guides/backends/#ways-to-run-the-relay).
 
-Run one relay process for each deploy. The relay keeps the one connection from the Mac in its process, so do not run two replicas of one deploy. With the JSON store, the state is in the files of that one process too.
+Run one relay process for each deploy. The relay keeps the one connection from the Mac in its process, so do not run two replicas of one deploy. With plugin-json, the state is in the files of that one process too.
 
 ## Step 5: Pair the Mac
 
@@ -88,14 +90,14 @@ Or run the command from the log in a terminal:
 studio agent pair wss://relay.example.com/agent K7QM-2XRD-9VHP
 ```
 
-The code works once. For a new code, run `relay pair-code` where the relay runs. With the JSON store, run it on the same data folder as the relay:
+The code works once. For a new code, run `relay pair-code` where the relay runs, with the same settings. With plugin-json, use the same data folder. The relay can keep running:
 
 ```sh
 docker compose exec relay relay pair-code
 kubectl exec deploy/relay -- relay pair-code
 ```
 
-With a plugin from `RELAY_PLUGIN` that locks its storage, `relay pair-code` cannot run next to the relay. Stop the relay, run the command in a new container with the same settings, and start the relay again (see [Store plugins](/guides/backends/#store-plugins)):
+With a plugin from `RELAY_PLUGIN` that locks its storage, `relay pair-code` cannot run next to the relay. Stop the relay, run the command in a new container with the same settings, and start the relay again (see [Another plugin](/guides/backends/#another-plugin)):
 
 ```sh
 docker compose stop relay
@@ -131,9 +133,9 @@ A message reaches the spec's Claude session as "Message from Claude AI". The ses
 
 ## The Temporal Web UI
 
-This section is for the Temporal store only. A relay on the JSON store has no codec endpoints.
+This section is for plugin-temporal only. A relay on plugin-json has no codec endpoints.
 
-The payloads in Temporal are encrypted. The Web UI can show the payloads of the spec workflows through the relay's codec endpoints:
+The payloads in Temporal are encrypted. The Web UI can show the payloads of the spec and desk workflows through the relay's codec endpoints:
 
 1. Set `UI_ORIGIN` to the origin of the Web UI, for example `https://cloud.temporal.io` or `http://localhost:8233`.
 2. Open `https://relay.example.com/codec/signin` and sign in with the owner password. The sign-in lasts 12 hours.

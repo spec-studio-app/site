@@ -18,7 +18,7 @@ Each change of a spec writes the new state and its events in one atomic step. So
 
 If the backend is not available, a change fails. The `studio` command exits with a message that names the plugin, the cause and what to do. The app shows the same cause in the strip of the spec and in **Settings > Backend**. Nothing is saved in another place.
 
-The relay has its own store. See [Relay backends](/guides/backends/). A backend plugin is a different setting. It works on the Mac.
+The relay also keeps its state only in a backend plugin. It uses plugin-json or plugin-temporal, or another plugin. See [Relay backends](/guides/backends/). The relay's plugin is a different setting from the plugin on the Mac. When both use plugin-temporal with the same Temporal server, namespace, deploy ID, payload keys and bucket, they share one store (see [Share the store with the Mac](/guides/backends/#share-the-store-with-the-mac)).
 
 ## The two official plugins
 
